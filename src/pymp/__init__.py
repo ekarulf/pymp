@@ -1,6 +1,8 @@
 import logging
 import multiprocessing
 
+from pymp.dispatcher import State, Dispatcher, Proxy
+
 DEBUG = False   # for now
 
 def get_logger(level=None):
