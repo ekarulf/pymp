@@ -1,8 +1,9 @@
 import os
 from collections import namedtuple
 
-Request = namedtuple('Request', 'id function args kwargs')
+Request = namedtuple('Request', 'id proxy_id function args kwargs')
 Response = namedtuple('Response', 'id exception return_value')
+ProxyHandle = namedtuple('ProxyHandle', 'id obj_type')
 
 def generate_id(obj=None):
     if obj and hasattr(obj, 'id'):
