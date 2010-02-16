@@ -1,7 +1,7 @@
 import time
 from threading import Event, RLock, Thread, current_thread
 from pymp import logger, trace_function
-from pymp.messages import Request, Response, ProxyHandle, generate_id
+from pymp.messages import DispatcherState, Request, Response, ProxyHandle, generate_id
 from collections import deque
 
 class State(object):
@@ -9,20 +9,34 @@ class State(object):
 
 class Dispatcher(object):
     PREFIX = '#'
-    SPIN_TIME = 0.01
-    _dispatch_ = ['del_proxy', 'new_proxy', 'shutdown', 'start']
+    SPIN_TIME = 0.005
+    _dispatch_ = ['del_proxy', 'new_proxy']
     
     @trace_function
     def __init__(self, conn):
-        self.lock = RLock()             # Public Lock
-        self.state = State.INIT
-        self._lock = RLock()            # Private Lock
+        self._state = State.INIT
+        self._lock = RLock()            # protects internal methods
         self._queue = deque()
         self._pending = dict()          # id => Event or Response
         self._proxy_classes = dict()    # Class => Class
         self._objects = dict()
         self._thread = Thread(target=self._run, args=(conn,))
         self._thread.start()
+        
+    def get_state(self):
+        return self._state
+    
+    def set_state(self, state):
+        with self._lock:
+            if state > self.state:
+                self._state = state
+                self._queue.append(DispatcherState(state))  # head of line
+                logger.info("Changing state to %d" % state)
+            elif state == self.state:
+                pass
+            else:
+                raise ValueError('Invalid state progression')
+    state = property(get_state, set_state)
     
     @trace_function
     def __del__(self):
@@ -56,10 +70,7 @@ class Dispatcher(object):
             event = Event()
             with self._lock:
                 self._pending[request.id] = event
-        if function.startswith(self.PREFIX):
-            self._queue.append(request) # Head-of-line
-        else:
-            self._queue.appendleft(request)
+        self._queue.appendleft(request)
         # Step 2: Wait for Response
         if wait:
             event.wait()
@@ -80,30 +91,30 @@ class Dispatcher(object):
     
     @trace_function
     def start(self):
-        if current_thread() == self._thread:
-            self.state = State.RUNNING
-            return
-        with self.lock:
-            if self.state is State.INIT:
-                self.state = State.STARTUP
-                self.call('#start') # blocking call
-            elif self.state is State.STARTUP:
-                raise RuntimeError("Start called on an object not fully constructed")
-            else:
-                raise RuntimeError("Error starting dispatcher, invalid state")
+        if self.state is State.INIT:
+            self.state = State.STARTUP
+        if self.state is State.STARTUP:
+            while self.state is State.STARTUP:
+                time.sleep(self.SPIN_TIME)
+    
+    @trace_function
+    def shutdown(self):
+        if self.state in (State.INIT, State.STARTUP, State.RUNNING):
+            self.state = State.SHUTDOWN
     
     @trace_function
     def _run(self, conn):
         while self.state is State.INIT:
             time.sleep(self.SPIN_TIME) # wait for the constructor to catch up
         
-        while self.alive():
-            if not self._write_once(conn):
-                break
-            if not self._read_once(conn):
-                break
+        while self.state in (State.STARTUP, State.RUNNING):
+            self._write_once(conn)
+            self._read_once(conn)
             if not (conn.poll(0) or len(self._queue) > 0):
                 time.sleep(self.SPIN_TIME)
+        
+        while len(self._queue) > 0:
+            self._write_once(conn)  # send shutdown message if needed
         
         self.state = State.TERMINATED
         conn.close()
@@ -133,33 +144,42 @@ class Dispatcher(object):
                 logger.warn("Error destructing object %s, not found" % str(proxy_id))
     
     def _write_once(self, conn):
+        if not self.alive():
+            return
         try:
             msg = self._queue.pop()
         except IndexError:
-            return True
+            return
         try:
-            conn.send(msg)
+            if isinstance(msg, DispatcherState) or self.state is State.RUNNING:
+                conn.send(msg)
+            else:
+                logger.info("Skipping outgoing message %s" % repr(msg))
         except IOError:
-            return False
+            self.state = State.TERMINATED
         except Exception as exception:
             # Most likely a PicklingError
             response = Response(request.id, exception, None)
             self._process_response(response)
-        return True
     
     def _read_once(self, conn):
-        if not conn.poll(0):
-            return True
+        if not self.alive() or not conn.poll(0):
+            return
         try:
             msg = conn.recv()
         except EOFError:
-            return False
-        if isinstance(msg, Request):
+            self.state = State.TERMINATED
+        if isinstance(msg, Request) and self.state is State.RUNNING:
             self._process_request(msg)
-        elif isinstance(msg, Response):
+        elif isinstance(msg, Response) and self.state is State.RUNNING:
             self._process_response(msg)
+        elif isinstance(msg, DispatcherState):
+            if self.state is State.STARTUP and msg.state is State.STARTUP:
+                self.state = State.RUNNING
+            elif msg.state is State.SHUTDOWN:
+                self.state = msg.state
         else:
-            pass # Ignore
+            logger.info("Skipping incoming message %s" % repr(msg))
         return True
     
     @trace_function
@@ -197,20 +217,6 @@ class Dispatcher(object):
             if hasattr(event, 'set'):
                 self._pending[response.id] = response
                 event.set()
-    
-    @trace_function
-    def shutdown(self):
-        if current_thread() == self._thread:
-            self.state = State.TERMINATED
-            return
-        with self.lock:
-            if self.state is State.RUNNING:
-                self.state = State.STARTUP
-                self.call('#shutdown') # blocking call
-            elif self.state is State.TERMINATED:
-                pass
-            else:
-                raise RuntimeError("Error starting dispatcher, invalid state")
 
 class Proxy(object):
     @trace_function
