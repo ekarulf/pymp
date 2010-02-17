@@ -1,9 +1,9 @@
 import logging
 import multiprocessing
 
-from pymp.dispatcher import State, Dispatcher, Proxy
+__all__ = ['logger', 'trace_function', 'State', 'Dispatcher', 'Proxy']
 
-DEBUG = False   # for now
+DEBUG = True   # for now
 
 def get_logger(level=None):
     logger = multiprocessing.get_logger()
@@ -34,3 +34,4 @@ def trace_function(f):
         return f
     
 
+from pymp.dispatcher import State, Dispatcher, Proxy
