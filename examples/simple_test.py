@@ -26,6 +26,11 @@ def main():
     dispatch = Dispatcher(parent_conn)
     dispatch.register(Foo)
     dispatch.start()
+
+    bar = dispatch.Foo()
+    bar.test()
+    del bar
+
     foo = dispatch.Foo()
     count = 0
     try:

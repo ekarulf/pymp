@@ -128,7 +128,9 @@ class Dispatcher(object):
         obj = source_class(*args, **kwargs)
         obj_id = id(obj)
         with self._lock:
-            self._objects[obj_id] = obj
+            obj_store, refcount = self._objects.get(obj_id, (obj, 0))
+            assert obj is obj_store, "Different objects returned for the same key"
+            self._objects[obj_id] = (obj, refcount + 1)
         return ProxyHandle(obj_id, source_class)
     
     @trace_function
@@ -138,10 +140,13 @@ class Dispatcher(object):
         See: DefaultProxy.__del__
         """
         with self._lock:
-            try:
-                del self._objects[proxy_id]
-            except KeyError:
+            obj, refcount = self._objects.get(proxy_id, (None, 0))
+            if refcount <= 0:
                 logger.warn("Error destructing object %s, not found" % str(proxy_id))
+            elif refcount == 1:
+                del self._objects[proxy_id]
+            else:
+                self._objects[proxy_id] = (obj, refcount - 1)
     
     def _write_once(self, conn):
         if not self.alive():
@@ -190,7 +195,7 @@ class Dispatcher(object):
             fname = fname[1:]
         else:
             with self._lock:
-                obj = self._objects.get(request.proxy_id, None)
+                obj, refcount = self._objects.get(request.proxy_id, (None, 0))
         if obj is None:
             raise RuntimeError("No object found")
         elif hasattr(obj, '_dispatch_') and fname in obj._dispatch_:
