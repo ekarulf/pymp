@@ -34,7 +34,7 @@ def main():
             logger.info("Count: %d" % count)
             print count
             time.sleep(0.25)
-    except BaseException:
+    finally:
         dispatch.shutdown()
 
 @trace_function
@@ -44,7 +44,7 @@ def child(conn):
     dispatch.start()
     try:
         dispatch.join()
-    except BaseException:
+    finally:
         dispatch.shutdown()
     
 if __name__ == '__main__':
