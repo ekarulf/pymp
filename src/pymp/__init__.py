@@ -26,9 +26,10 @@ def trace_function(f):
     if DEBUG:
         def run(*args, **kwargs):
             logger.debug("%s called" % repr(f))
-            value = f(*args, **kwargs)
-            logger.debug("%s returned" % repr(f))
-            return value
+            try:
+                return f(*args, **kwargs)
+            finally:
+                logger.debug("%s returned" % repr(f))
         return run
     else:
         return f
