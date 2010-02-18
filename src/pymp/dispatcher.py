@@ -1,4 +1,5 @@
 import time
+from multiprocessing.util import Finalize
 from threading import Event, RLock, Thread, current_thread
 from pymp import logger, trace_function
 from pymp.messages import DispatcherState, Request, Response, ProxyHandle, generate_id
@@ -21,7 +22,11 @@ class Dispatcher(object):
         self._proxy_classes = dict()    # Class => Class
         self._objects = dict()
         self._thread = Thread(target=self._run, args=(conn,))
+        self._thread.daemon = True
         self._thread.start()
+        # We register with multiprocessing to prevent bugs related to the
+        # order of execution of atexit functions & multiprocessing's join's
+        Finalize(self, self._atexit, exitpriority=100)
         
     def get_state(self):
         return self._state
@@ -37,6 +42,10 @@ class Dispatcher(object):
             else:
                 raise ValueError('Invalid state progression')
     state = property(get_state, set_state)
+    
+    @trace_function
+    def _atexit(self):
+        self.shutdown()
     
     @trace_function
     def __del__(self):
