@@ -53,4 +53,11 @@ def child(conn):
         dispatch.shutdown()
     
 if __name__ == '__main__':
-    main()
+    import pdb
+    try:
+        main()
+    except:
+        pdb.pm()
+    else:
+        import sys
+        sys.exit(0)
