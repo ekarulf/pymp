@@ -24,14 +24,17 @@ def main():
     p.start()
 
     dispatch = Dispatcher(parent_conn)
-    dispatch.register(Foo)
+    dispatch.consume("Foo")
+    dispatch.consume("StaticFoo")
     dispatch.start()
 
     from multiprocessing.util import Finalize
     Finalize(dispatch, dispatch.shutdown, exitpriority=10)
     
+    baz = dispatch.StaticFoo()
+    baz.test()
+    bar = dispatch.Foo()
     try:
-        bar = dispatch.Foo()
         bar.tester()
     except AttributeError:
         print "Attribute Error Thrown!"
@@ -45,7 +48,7 @@ def main():
     else:
         assert False, "Should have thrown an exception"
     
-    foo = dispatch.Foo()
+    foo = dispatch.StaticFoo()
     count = 0
     while count < 3:
         count = foo.test()
@@ -56,7 +59,10 @@ def main():
 @trace_function
 def child(conn):
     dispatch = Dispatcher(conn)
-    dispatch.register(Foo)
+    foo = Foo()
+    static_foo = lambda:foo
+    dispatch.provide(Foo)
+    dispatch.provide(Foo, static_foo, 'StaticFoo')
     dispatch.start()
     try:
         dispatch.join()

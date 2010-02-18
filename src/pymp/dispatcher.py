@@ -21,7 +21,8 @@ class Dispatcher(object):
         self._lock = RLock()            # protects internal methods
         self._queue = deque()
         self._pending = dict()          # id => Event or Response
-        self._proxy_classes = dict()    # Class => Class
+        self._provided_classes = dict() # string => (Class, callable)
+        self._consumed_classes = dict() # Class => Class
         self._objects = dict()
         self._thread = Thread(target=self._run, args=(conn,))
         self._thread.daemon = True
@@ -57,16 +58,29 @@ class Dispatcher(object):
         self._objects.clear()
     
     @trace_function
-    def register(self, proxy_class, proxy_client=None, name=None):
+    def provide(self, proxy_class, generator=None, name=None):
+        """
+        Registers a class that will be provided by this dispatcher
+        If present, a generator will be used in lieu of using a the provided
+        class's default constructor.
+        """
         if not name:
             name = proxy_class.__name__
         with self._lock:
+            if name in self._provided_classes:
+                raise NameError("The name '%s' is already in use" % name)
+            self._provided_classes[name] = (proxy_class, generator)
+    
+    @trace_function
+    def consume(self, name, proxy_client=None):
+        if hasattr(name, '__name__'):
+            name = name.__name__
+        with self._lock:
             if hasattr(self, name):
                 raise NameError("The name '%s' is already in use" % name)
-            if proxy_client:
-                self._proxy_classes[proxy_class] = proxy_client
+            self._consumed_classes[name] = proxy_client or Proxy
             def create_instance(*args, **kwargs):
-                new_proxy_args = (proxy_class, args, kwargs)
+                new_proxy_args = (name, args, kwargs)
                 return self.call('#new_proxy', new_proxy_args)
             setattr(self, name, create_instance)
     
@@ -95,8 +109,13 @@ class Dispatcher(object):
         elif response.exception:
             raise response.exception
         elif isinstance(response.return_value, ProxyHandle):
-            proxy_class = self._proxy_classes.get(response.return_value.obj_type, Proxy)
-            return proxy_class(self, response.return_value.id, response.return_value.exposed)
+            proxy_handle = response.return_value
+            try:
+                proxy_class = self._consumed_classes[proxy_handle.obj_type]
+            except KeyError:
+                logger.info("Recieved proxy_class for unexpected type %s" % proxy_handle.obj_type)
+            else:
+                return proxy_class(self, proxy_handle.id, proxy_handle.exposed)
         else:
             return response.return_value
     
@@ -133,10 +152,16 @@ class Dispatcher(object):
         self._thread.join()
     
     @trace_function
-    def new_proxy(self, source_class, args, kwargs):
-        obj = source_class(*args, **kwargs)
-        obj_id = id(obj)
+    def new_proxy(self, name, args, kwargs):
         with self._lock:
+            if name not in self._provided_classes:
+                raise NameError("%s does not name a provided class" % name)
+            source_class, generator = self._provided_classes[name]
+            if not generator:
+                generator = source_class
+            obj = generator(*args, **kwargs)
+            obj_id = id(obj)
+            
             obj_store, refcount = self._objects.get(obj_id, (obj, 0))
             assert obj is obj_store, "Different objects returned for the same key"
             self._objects[obj_id] = (obj, refcount + 1)
@@ -144,10 +169,10 @@ class Dispatcher(object):
         exposed = getattr(source_class, self.EXPOSED, None)
         if exposed is None:
             exposed = []
-            for name, attribute in source_class.__dict__.items():
-                if not name.startswith('_') and callable(attribute):
-                    exposed.append(name)
-        return ProxyHandle(obj_id, source_class, exposed)
+            for attr_name, attribute in source_class.__dict__.items():
+                if not attr_name.startswith('_') and callable(attribute):
+                    exposed.append(attr_name)
+        return ProxyHandle(obj_id, name, exposed)
     
     @trace_function
     def del_proxy(self, proxy_id):
