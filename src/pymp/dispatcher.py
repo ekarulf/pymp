@@ -11,6 +11,7 @@ class State(object):
 
 class Dispatcher(object):
     PREFIX = '#'
+    EXPOSED = '_dispatch_'
     SPIN_TIME = 0.005
     _dispatch_ = ['del_proxy', 'new_proxy']
     
@@ -142,7 +143,7 @@ class Dispatcher(object):
             assert obj is obj_store, "Different objects returned for the same key"
             self._objects[obj_id] = (obj, refcount + 1)
         # Generate the list of exposed methods
-        exposed = getattr(source_class, '_dispatch_', None)
+        exposed = getattr(source_class, self.EXPOSED, None)
         if exposed is None:
             exposed = []
             for name, attribute in source_class.__dict__.items():
@@ -216,9 +217,9 @@ class Dispatcher(object):
                 obj, refcount = self._objects.get(request.proxy_id, (None, 0))
         if obj is None:
             raise RuntimeError("No object found")
-        elif hasattr(obj, '_dispatch_') and fname in obj._dispatch_:
+        elif hasattr(obj, self.EXPOSED) and fname in obj._dispatch_:
             function = getattr(obj, fname, None)
-        elif not hasattr(obj, '_dispatch_') and not fname.startswith('_'):
+        elif not hasattr(obj, self.EXPOSED) and not fname.startswith('_'):
             function = getattr(obj, fname, None)
         else:
             function = None
