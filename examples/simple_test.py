@@ -27,13 +27,13 @@ def main():
     dispatch.register(Foo)
     dispatch.start()
 
-    bar = dispatch.Foo()
-    bar.test()
-    del bar
-
-    foo = dispatch.Foo()
-    count = 0
     try:
+        bar = dispatch.Foo()
+        bar.test()
+        del bar
+
+        foo = dispatch.Foo()
+        count = 0
         while count < 10:
             count = foo.test()
             logger.info("Count: %d" % count)
