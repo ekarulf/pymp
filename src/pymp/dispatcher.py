@@ -40,7 +40,7 @@ class Dispatcher(object):
     
     @trace_function
     def __del__(self):
-        if not self.alive():
+        if self.alive():
             self.shutdown()
         self._thread.join()
         self._objects.clear()
@@ -85,7 +85,7 @@ class Dispatcher(object):
             raise response.exception
         elif isinstance(response.return_value, ProxyHandle):
             proxy_class = self._proxy_classes.get(response.return_value.obj_type, Proxy)
-            return proxy_class(self, response.return_value.id)
+            return proxy_class(self, response.return_value.id, response.return_value.exposed)
         else:
             return response.return_value
     
@@ -131,7 +131,14 @@ class Dispatcher(object):
             obj_store, refcount = self._objects.get(obj_id, (obj, 0))
             assert obj is obj_store, "Different objects returned for the same key"
             self._objects[obj_id] = (obj, refcount + 1)
-        return ProxyHandle(obj_id, source_class)
+        # Generate the list of exposed methods
+        exposed = getattr(source_class, '_dispatch_', None)
+        if exposed is None:
+            exposed = []
+            for name, attribute in source_class.__dict__.items():
+                if not name.startswith('_') and callable(attribute):
+                    exposed.append(name)
+        return ProxyHandle(obj_id, source_class, exposed)
     
     @trace_function
     def del_proxy(self, proxy_id):
@@ -225,16 +232,18 @@ class Dispatcher(object):
 
 class Proxy(object):
     @trace_function
-    def __init__(self, dispatcher, proxy_id):
+    def __init__(self, dispatcher, proxy_id, exposed):
         self._dispatcher = dispatcher
         self._proxy_id = proxy_id
+        for name in exposed:
+            setattr(self, name, self._create_wrapper(name))
     
     @trace_function
     def __del__(self):
         self._dispatcher.call('#del_proxy', (self._proxy_id,), wait=False)
     
     @trace_function
-    def __getattr__(self, name):
+    def _create_wrapper(self, name):
         def remote_call(*args, **kwargs):
             return self._dispatcher.call(name, args, kwargs, proxy_id=self._proxy_id)
         return remote_call
