@@ -1,3 +1,4 @@
+import functools
 import time
 from multiprocessing.util import Finalize
 from threading import Event, RLock, Thread, current_thread
@@ -180,8 +181,9 @@ class Dispatcher(object):
             self.state = State.TERMINATED
         except Exception as exception:
             # Most likely a PicklingError
-            response = Response(request.id, exception, None)
-            self._process_response(response)
+            if hasattr(msg, 'id'):
+                response = Response(msg.id, exception, None)
+                self._process_response(response)
     
     def _read_once(self, conn):
         if not self.alive() or not conn.poll(0):
@@ -245,15 +247,15 @@ class Proxy(object):
         self._dispatcher = dispatcher
         self._proxy_id = proxy_id
         for name in exposed:
-            setattr(self, name, self._create_wrapper(name))
+            func = functools.partial(self._callmethod, name)
+            func.__name__ = name
+            setattr(self, name, func)
+    
+    @trace_function
+    def _callmethod(self, name, *args, **kwargs):
+        return self._dispatcher.call(name, args, kwargs, proxy_id=self._proxy_id)
     
     @trace_function
     def __del__(self):
         self._dispatcher.call('#del_proxy', (self._proxy_id,), wait=False)
     
-    @trace_function
-    def _create_wrapper(self, name):
-        def remote_call(*args, **kwargs):
-            return self._dispatcher.call(name, args, kwargs, proxy_id=self._proxy_id)
-        return remote_call
-
