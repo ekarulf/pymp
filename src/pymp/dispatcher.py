@@ -120,9 +120,7 @@ class Dispatcher(object):
         
         while self.state in (State.STARTUP, State.RUNNING):
             self._write_once(conn)
-            self._read_once(conn)
-            if not (conn.poll(0) or len(self._queue) > 0):
-                time.sleep(self.SPIN_TIME)
+            self._read_once(conn, timeout=self.SPIN_TIME)
         
         while len(self._queue) > 0:
             self._write_once(conn)  # send shutdown message if needed
@@ -186,8 +184,8 @@ class Dispatcher(object):
                 response = Response(msg.id, exception, None)
                 self._process_response(response)
     
-    def _read_once(self, conn):
-        if not self.alive() or not conn.poll(0):
+    def _read_once(self, conn, timeout=0):
+        if not self.alive() or not conn.poll(timeout):
             return
         try:
             msg = conn.recv()
