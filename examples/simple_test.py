@@ -27,20 +27,31 @@ def main():
     dispatch.register(Foo)
     dispatch.start()
 
+    from multiprocessing.util import Finalize
+    Finalize(dispatch, dispatch.shutdown, exitpriority=10)
+    
     try:
         bar = dispatch.Foo()
-        bar.test()
-        del bar
-
-        foo = dispatch.Foo()
-        count = 0
-        while count < 10:
-            count = foo.test()
-            logger.info("Count: %d" % count)
-            print count
-            time.sleep(0.25)
-    finally:
-        dispatch.shutdown()
+        bar.tester()
+    except AttributeError:
+        print "Attribute Error Thrown!"
+    else:
+        assert False, "Should have thrown an exception"
+    
+    try:
+        bar.test(True)
+    except TypeError:
+        print "Type Error Thrown!"
+    else:
+        assert False, "Should have thrown an exception"
+    
+    foo = dispatch.Foo()
+    count = 0
+    while count < 3:
+        count = foo.test()
+        logger.info("Count: %d" % count)
+        print count
+        time.sleep(0.25)
 
 @trace_function
 def child(conn):
@@ -54,10 +65,4 @@ def child(conn):
     
 if __name__ == '__main__':
     import pdb
-    try:
-        main()
-    except:
-        pdb.pm()
-    else:
-        import sys
-        sys.exit(0)
+    main()
