@@ -236,7 +236,7 @@ class Dispatcher(object):
         if exposed and fname in exposed or not exposed and not fname.startswith('_'):
             function = getattr(obj, fname, None)
         else:
-            exception = AttributeError("%s does not have an exposed method %s" % (repr(obj), fname))
+            raise AttributeError("%s does not have an exposed method %s" % (repr(obj), fname))
         return function(*args, **kwargs)
     
     @trace_function
