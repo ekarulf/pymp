@@ -1,5 +1,6 @@
 import functools
 import time
+import traceback
 from multiprocessing.util import Finalize
 from threading import Event, RLock, Thread, current_thread
 from pymp import logger, trace_function
@@ -262,6 +263,7 @@ class Dispatcher(object):
         try:
             value = self._callmethod(obj, fname, request.args, request.kwargs)
         except Exception as exception:
+            logger.error("Exception thrown while processing response\nRemote " + traceback.format_exc())
             return Response(request.id, exception, None)
         else:
             return Response(request.id, None, value)
