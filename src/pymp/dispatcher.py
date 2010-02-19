@@ -273,6 +273,7 @@ class Proxy(object):
     def __init__(self, dispatcher, proxy_id, exposed):
         self._dispatcher = dispatcher
         self._proxy_id = proxy_id
+        self._exposed = exposed
         for name in exposed:
             func = functools.partial(self._callmethod, name)
             func.__name__ = name
