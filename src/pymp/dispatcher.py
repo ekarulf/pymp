@@ -12,7 +12,7 @@ class State(object):
 class Dispatcher(object):
     PREFIX = '#'
     EXPOSED = '_dispatch_'
-    SPIN_TIME = 0.005
+    SPIN_TIME = 0.01
     _dispatch_ = ['del_proxy', 'new_proxy']
     
     @trace_function
@@ -165,13 +165,7 @@ class Dispatcher(object):
             obj_store, refcount = self._objects.get(obj_id, (obj, 0))
             assert obj is obj_store, "Different objects returned for the same key"
             self._objects[obj_id] = (obj, refcount + 1)
-        # Generate the list of exposed methods
-        exposed = getattr(source_class, self.EXPOSED, None)
-        if exposed is None:
-            exposed = []
-            for attr_name, attribute in source_class.__dict__.items():
-                if not attr_name.startswith('_') and callable(attribute):
-                    exposed.append(attr_name)
+        exposed = self._exposed_functions(obj)
         return ProxyHandle(obj_id, name, exposed)
     
     @trace_function
@@ -218,7 +212,8 @@ class Dispatcher(object):
             self.state = State.TERMINATED
         if isinstance(msg, Request) and self.state is State.RUNNING:
             response = self._process_request(msg)
-            self._queue.appendleft(response)
+            if response:
+                self._queue.appendleft(response)
         elif isinstance(msg, Response) and self.state is State.RUNNING:
             self._process_response(msg)
         elif isinstance(msg, DispatcherState):
@@ -231,13 +226,24 @@ class Dispatcher(object):
         return True
     
     @trace_function
-    def _callmethod(self, obj, fname, args, kwargs):
+    def _exposed_functions(self, obj):
         exposed = getattr(obj, self.EXPOSED, None)
-        if exposed and fname in exposed or not exposed and not fname.startswith('_'):
-            function = getattr(obj, fname, None)
+        if exposed is None:
+            exposed = []
+            for name in dir(obj):    # TODO: Not use dir
+                attribute = getattr(obj, name)
+                if callable(attribute) and not name.startswith('_'):
+                    exposed.append(name)
+            setattr(obj, self.EXPOSED, exposed)
+        return exposed
+    
+    @trace_function
+    def _callmethod(self, obj, fname, args, kwargs):
+        if fname in self._exposed_functions(obj):
+            function = getattr(obj, fname)
+            return function(*args, **kwargs)
         else:
             raise AttributeError("%s does not have an exposed method %s" % (repr(obj), fname))
-        return function(*args, **kwargs)
     
     @trace_function
     def _process_request(self, request):
