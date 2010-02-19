@@ -217,7 +217,8 @@ class Dispatcher(object):
         except EOFError:
             self.state = State.TERMINATED
         if isinstance(msg, Request) and self.state is State.RUNNING:
-            self._process_request(msg)
+            response = self._process_request(msg)
+            self._queue.appendleft(response)
         elif isinstance(msg, Response) and self.state is State.RUNNING:
             self._process_response(msg)
         elif isinstance(msg, DispatcherState):
@@ -230,32 +231,34 @@ class Dispatcher(object):
         return True
     
     @trace_function
+    def _callmethod(self, obj, fname, args, kwargs):
+        exposed = getattr(obj, self.EXPOSED, None)
+        if exposed and fname in exposed or not exposed and not fname.startswith('_'):
+            function = getattr(obj, fname, None)
+        else:
+            exception = AttributeError("%s does not have an exposed method %s" % (repr(obj), fname))
+        return function(*args, **kwargs)
+    
+    @trace_function
     def _process_request(self, request):
+        exception = None
         fname = request.function
         if fname.startswith(self.PREFIX):
-            obj = self
-            fname = fname[1:]
+            obj = self          # invoke methods on dispatcher
+            fname = fname[1:]   # strip prefix
         else:
             with self._lock:
-                obj, refcount = self._objects.get(request.proxy_id, (None, 0))
-        if obj is None:
-            raise RuntimeError("No object found")
-        elif hasattr(obj, self.EXPOSED) and fname in obj._dispatch_:
-            function = getattr(obj, fname, None)
-        elif not hasattr(obj, self.EXPOSED) and not fname.startswith('_'):
-            function = getattr(obj, fname, None)
-        else:
-            function = None
-        if not callable(function):
-            raise RuntimeError("No exposed method %s found on object %s" % (fname, repr(type(obj))))
+                try:
+                    obj, refcount = self._objects[request.proxy_id]
+                except KeyError:
+                    exception = RuntimeError("No object found")
+                    return Response(request.id, exception, None)
         try:
-            value = function(*request.args, **request.kwargs)
+            value = self._callmethod(obj, fname, request.args, request.kwargs)
         except Exception as exception:
-            response = Response(request.id, exception, None)
+            return Response(request.id, exception, None)
         else:
-            response = Response(request.id, None, value)
-        finally:
-            self._queue.appendleft(response)
+            return Response(request.id, None, value)
     
     @trace_function
     def _process_response(self, response):
