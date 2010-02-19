@@ -3,7 +3,7 @@ import multiprocessing
 
 __all__ = ['logger', 'trace_function', 'State', 'Dispatcher', 'Proxy']
 
-DEBUG = True   # for now
+DEBUG = False   # for now
 
 def get_logger(level=None):
     logger = multiprocessing.get_logger()
@@ -24,12 +24,17 @@ else:
 
 def trace_function(f):
     if DEBUG:
+        name = f.func_name
         def run(*args, **kwargs):
-            logger.debug("%s called" % repr(f))
+            logger.debug("CALL: %s %s %s" % (name, repr(args), repr(kwargs)))
             try:
-                return f(*args, **kwargs)
-            finally:
-                logger.debug("%s returned" % repr(f))
+                value = f(*args, **kwargs)
+            except:
+                logger.debug("RAISE:  %s" % name)
+                raise
+            else:
+                logger.debug("RETURN: %s = %s" % (name, repr(value)))
+                return value
         return run
     else:
         return f
